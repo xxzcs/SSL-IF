@@ -1,0 +1,61 @@
+algorithm: simmatch
+save_dir: ./saved_models/usb_cv/
+save_name: simmatch_gdph_37_0
+resume: False
+load_path: ./saved_models/usb_cv/simmatch_gdph_37_0/latest_model.pth
+overwrite: True
+use_tensorboard: True
+use_wandb: False
+epoch: 50
+num_train_iter: 3600
+num_log_iter: 72
+num_eval_iter: 72
+batch_size: 8
+eval_batch_size: 16
+num_warmup_iter: 144
+num_labels: 577
+label_ratio: 0.3
+fold: 1
+uratio: 30
+ema_m: 0.999
+# ----- SimMatch 专属超参 (沿用用户在 SimMatch-main 中设计的设置) -----
+T: 0.1                 # st=tt=0.1
+p_cutoff: 0.9          # threshold=0.9
+proj_size: 128
+K: 256                 # 运行时自动覆盖为标注集长度
+in_loss_ratio: 5.0     # lambda_in=5
+ulb_loss_ratio: 10.0   # lambda_u=10
+smoothing_alpha: 0.9   # c_smooth=0.9
+da_len: 256
+use_epass: False
+use_da: True
+# -------------------------------------------------------------------
+img_size: 224
+crop_ratio: 0.875
+optim: SGD
+lr: 0.0046875
+sched: linear
+lr_drop_iter: 1080 2160 3240
+layer_decay: 1.0
+momentum: 0.9
+weight_decay: 0.0005
+amp: False
+clip: 0.0
+use_cat: True
+net: resnet18
+net_from_name: False
+data_dir: ../uda_data/GDPH
+dataset: gdph
+train_sampler: RandomSampler
+num_classes: 2
+num_workers: 4
+seed: 0
+split_seed: 0
+world_size: 1
+rank: 0
+multiprocessing_distributed: False
+dist_url: tcp://127.0.0.1:10037
+dist_backend: nccl
+gpu: None
+use_pretrain: False
+pretrain_path: https://download.pytorch.org/models/resnet18-5c106cde.pth

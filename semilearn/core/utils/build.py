@@ -39,7 +39,6 @@ def get_net_builder(net_name, from_name: bool):
         return builder
 
 
-
 def get_logger(name, save_path=None, level='INFO'):
     """
     create logger function
@@ -57,7 +56,7 @@ def get_logger(name, save_path=None, level='INFO'):
     return logger
 
 
-def get_dataset(args, algorithm, dataset, num_labels, num_classes, data_dir='./data', include_lb_to_ulb=True):
+def get_dataset(args, algorithm, dataset, num_labels, num_classes, data_dir, lpath, ulpath, include_lb_to_ulb=True):
     """
     create dataset
 
@@ -70,7 +69,7 @@ def get_dataset(args, algorithm, dataset, num_labels, num_classes, data_dir='./d
         data_dir: data folder
         include_lb_to_ulb: flag of including labeled data into unlabeled data
     """
-    from semilearn.datasets import get_eurosat, get_medmnist, get_semi_aves, get_cifar, get_svhn, get_stl10, get_imagenet, get_json_dset, get_pkl_dset
+    from semilearn.datasets import get_eurosat, get_medmnist, get_semi_aves, get_cifar, get_svhn, get_stl10, get_imagenet, get_json_dset, get_pkl_dset, get_bus, get_busi, get_gdph, get_tn5000
 
     if dataset == "eurosat":
         lb_dset, ulb_dset, eval_dset = get_eurosat(args, algorithm, dataset, num_labels, num_classes, data_dir=data_dir, include_lb_to_ulb=include_lb_to_ulb)
@@ -96,6 +95,15 @@ def get_dataset(args, algorithm, dataset, num_labels, num_classes, data_dir='./d
     elif dataset in ["imagenet", "imagenet127"]:
         lb_dset, ulb_dset, eval_dset = get_imagenet(args, algorithm, dataset, num_labels, num_classes, data_dir=data_dir, include_lb_to_ulb=include_lb_to_ulb)
         test_dset = None
+    elif dataset == 'bus':
+        lb_dset, ulb_dset, eval_dset, test_dset = get_bus(args, algorithm, dataset, num_labels, num_classes, data_dir=data_dir, lpath=lpath, ulpath=ulpath, include_lb_to_ulb=include_lb_to_ulb)
+    elif dataset == 'busi':
+        lb_dset, ulb_dset, eval_dset, test_dset = get_busi(args, algorithm, dataset, num_labels, num_classes, data_dir=data_dir, lpath=lpath, ulpath=ulpath, include_lb_to_ulb=include_lb_to_ulb)
+    elif dataset == 'gdph':
+        lb_dset, ulb_dset, eval_dset, test_dset = get_gdph(args, algorithm, dataset, num_labels, num_classes, data_dir=data_dir, include_lb_to_ulb=include_lb_to_ulb)
+    elif dataset == 'tn5000':
+        lb_dset, ulb_dset, eval_dset, test_dset = get_tn5000(args, algorithm, dataset, num_labels, num_classes, data_dir=data_dir, include_lb_to_ulb=include_lb_to_ulb)
+
     # speech dataset
     elif dataset in ['esc50', 'fsdnoisy', 'gtzan', 'superbks', 'superbsi', 'urbansound8k']:
         lb_dset, ulb_dset, eval_dset, test_dset = get_pkl_dset(args, algorithm, dataset, num_labels, num_classes, data_dir=data_dir, include_lb_to_ulb=include_lb_to_ulb)
@@ -213,7 +221,6 @@ def get_optimizer(net, optim_name='SGD', lr=0.1, momentum=0.9, weight_decay=0, l
 
     return optimizer
 
-
 def get_cosine_schedule_with_warmup(optimizer,
                                     num_training_steps,
                                     num_cycles=7. / 16.,
@@ -238,6 +245,35 @@ def get_cosine_schedule_with_warmup(optimizer,
             _lr = max(0.0, math.cos(math.pi * num_cycles * num_cos_steps))
         return _lr
 
+    return LambdaLR(optimizer, _lr_lambda, last_epoch)
+
+def get_linear_schedule_with_warmup(args,
+                                    optimizer,
+                                    num_warmup_steps,                                    
+                                    last_epoch=-1):
+    
+    from torch.optim.lr_scheduler import LambdaLR
+
+    # 处理 lr_drop_iter 参数，支持字符串 (如 YAML 中的 "100 200") 或列表
+    lr_drop_iter = args.lr_drop_iter
+    if isinstance(lr_drop_iter, str):
+        lr_drop_iter = [int(i) for i in lr_drop_iter.split()]
+    else:
+        lr_drop_iter = [int(i) for i in lr_drop_iter]
+
+    def _lr_lambda(current_step):
+        if current_step < num_warmup_steps:
+            return float(current_step) / float(max(1, num_warmup_steps))
+        
+        no_gress = 1.0
+        # 按照处理后的 lr_drop_iter 列表进行动态衰减
+        for i, drop_iter in enumerate(lr_drop_iter):
+            if current_step >= drop_iter:
+                no_gress = 0.1 ** (i + 1)
+            else:
+                break
+        return no_gress
+       
     return LambdaLR(optimizer, _lr_lambda, last_epoch)
 
 

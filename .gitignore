@@ -140,3 +140,21 @@ dmypy.json
 
 # MacOS system file
 .DS_Store
+
+# Experiment artifacts (keep code/configuration in Git, not run outputs)
+results/
+preds/
+logs/
+*.out
+nohup.out
+events.out.tfevents.*
+
+# Pipeline state markers
+*_DONE
+*_DONE_*
+ALL_DONE_*
+
+# Generated per-run configurations and temporary backups
+config/_*.yaml
+*.orig
+*.tmp

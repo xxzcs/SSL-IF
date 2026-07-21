@@ -6,6 +6,10 @@ import torch
 from torch import Tensor
 import torch.nn as nn
 from typing import Type, Any, Callable, Union, List, Optional
+try:
+    from torch.hub import load_state_dict_from_url
+except ImportError:
+    from torchvision.models.utils import load_state_dict_from_url
 
 
 def conv3x3(in_planes: int, out_planes: int, stride: int = 1, groups: int = 1, dilation: int = 1) -> nn.Conv2d:
@@ -126,20 +130,25 @@ class Bottleneck(nn.Module):
         return out
 
 
-class ResNet50(nn.Module):
+class ResNet(nn.Module):
 
     def __init__(
-            self,
-            block: Type[Union[BasicBlock, Bottleneck]] = Bottleneck,
-            layers: List[int] = [3, 4, 6, 3],
-            num_classes: int = 1000,
-            zero_init_residual: bool = False,
-            groups: int = 1,
-            width_per_group: int = 64,
+            self, block, layers, num_classes=2, zero_init_residual: bool = False,
+            groups: int = 1, width_per_group: int = 64, 
             replace_stride_with_dilation: Optional[List[bool]] = None,
             norm_layer: Optional[Callable[..., nn.Module]] = None
-    ) -> None:
-        super(ResNet50, self).__init__()
+        ) -> None:
+            # self,
+            # block: Type[Union[BasicBlock, Bottleneck]] = Bottleneck,
+            # layers: List[int], 
+            # num_classes: int = 2,
+            # zero_init_residual: bool = False,
+            # groups: int = 1,
+            # width_per_group: int = 64,
+            # replace_stride_with_dilation: Optional[List[bool]] = None,
+            # norm_layer: Optional[Callable[..., nn.Module]] = None
+    
+        super(ResNet, self).__init__()
         if norm_layer is None:
             norm_layer = nn.BatchNorm2d
         self._norm_layer = norm_layer
@@ -223,7 +232,7 @@ class ResNet50(nn.Module):
         """
 
         if only_fc:
-            return self.fc(x)
+            return self.classifier(x)
 
         x = self.extract(x)
         x = self.avgpool(x)
@@ -235,7 +244,6 @@ class ResNet50(nn.Module):
         out = self.classifier(x)
         result_dict = {'logits':out, 'feat':x}
         return result_dict
-
     
     def extract(self, x):
         x = self.conv1(x)
@@ -259,8 +267,27 @@ class ResNet50(nn.Module):
         for n, _ in self.named_parameters():
             if 'bn' in n or 'bias' in n:
                 nwd.append(n)
-        return nwd
+        return nwd    
 
-def resnet50(pretrained=False, pretrained_path=None, **kwargs):
-    model = ResNet50(**kwargs)
+def _resnet(arch, block, layers, pretrained, progress, **kwargs):
+    model = ResNet(block, layers, **kwargs)
+    if pretrained:
+        state_dict = load_state_dict_from_url(model_urls[arch], progress=progress)
+        model.load_state_dict(state_dict, strict=False)
+
     return model
+
+def resnet18(pretrained=False, pretrained_path=None, progress=True, **kwargs):
+
+    return _resnet('resnet18', BasicBlock, [2, 2, 2, 2], pretrained, progress, **kwargs)
+
+def resnet50(pretrained=False, pretrained_path=None, progress=True, **kwargs):
+    return _resnet('resnet50', BasicBlock, [3, 4, 6, 3], pretrained, progress, **kwargs)
+
+model_urls = {
+    'resnet18': 'https://download.pytorch.org/models/resnet18-5c106cde.pth',
+    'resnet34': 'https://download.pytorch.org/models/resnet34-333f7ec4.pth',
+    'resnet50': 'https://download.pytorch.org/models/resnet50-19c8e357.pth',
+    'resnet101': 'https://download.pytorch.org/models/resnet101-5d3b4d8f.pth',
+    'resnet152': 'https://download.pytorch.org/models/resnet152-b121ed2d.pth',
+}

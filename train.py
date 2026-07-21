@@ -154,7 +154,9 @@ def get_config():
         default="True",
         help="flag of including labeled data into unlabeled data, default to True",
     )
-
+    parser.add_argument('--lr_drop_iter', nargs="+", 
+                        default=[40000//3, 40000*2//3, 40000*8//9])
+    
     ## imbalanced setting arguments
     parser.add_argument(
         "--lb_imb_ratio",
@@ -175,6 +177,8 @@ def get_config():
         help="number of labels for unlabeled data, used for determining the maximum "
         "number of labels in imbalanced setting",
     )
+    parser.add_argument("--lpath", default="", type=str) 
+    parser.add_argument("--ulpath", default="", type=str)
 
     ## cv dataset arguments
     parser.add_argument("--img_size", type=int, default=32)
@@ -241,6 +245,7 @@ def get_config():
     # add imbalanced algorithm specific parameters
     args = parser.parse_args()
     over_write_args_from_file(args, args.c)
+    
     if args.imb_algorithm is not None:
         for argument in name2imbalg[args.imb_algorithm].get_argument():
             parser.add_argument(
@@ -373,6 +378,11 @@ def main_worker(gpu, ngpus_per_node, args):
     model.model = send_model_cuda(args, model.model)
     model.ema_model = send_model_cuda(args, model.ema_model, clip_batch=False)
     logger.info(f"Arguments: {model.args}")
+
+    # test the precision of the model parameters
+    print("@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@")
+    dtype = next(model.model.parameters()).dtype
+    print(f"模型精度: {dtype}")  # 输出：torch.float32
 
     # If args.resume, load checkpoints from args.load_path
     if args.resume and os.path.exists(args.load_path):

@@ -2,6 +2,7 @@
 # Licensed under the MIT License.
 
 import torch
+import numpy as np
 import torch.nn as nn
 import torch.nn.functional as F
 from semilearn.core import AlgorithmBase
@@ -112,8 +113,21 @@ class SimMatch(AlgorithmBase):
         self.labels_bank = torch.zeros(K, dtype=torch.long).cuda(self.gpu)
 
     def set_hooks(self):
+        # DA target distribution: 'uniform' (default, original behaviour) forces ulb
+        # pseudo-labels toward 1/num_classes; 'gt' aligns to a known true class prior
+        # passed via --da_p_target (e.g. "0.368,0.632" for GDPH); 'model' tracks the
+        # labeled-batch prior online.
+        da_p_target_type = getattr(self.args, 'da_p_target_type', 'uniform')
+        da_p_target = getattr(self.args, 'da_p_target', None)
+        if da_p_target_type == 'gt':
+            assert da_p_target is not None, "--da_p_target must be set when da_p_target_type='gt'"
+            if isinstance(da_p_target, str):
+                da_p_target = np.array([float(v) for v in da_p_target.split(',')], dtype=np.float32)
+        else:
+            da_p_target = None
         self.register_hook(
-            DistAlignQueueHook(num_classes=self.num_classes, queue_length=self.args.da_len, p_target_type='uniform'), 
+            DistAlignQueueHook(num_classes=self.num_classes, queue_length=self.args.da_len,
+                               p_target_type=da_p_target_type, p_target=da_p_target),
             "DistAlignHook")
         self.register_hook(FixedThresholdingHook(), "MaskingHook")
         super().set_hooks()
@@ -184,7 +198,8 @@ class SimMatch(AlgorithmBase):
                 if self.use_ema_teacher:
                     ema_feats_x_lb = self.model(x_lb)['feat']
                 ema_probs_x_ulb_w = F.softmax(ema_logits_x_ulb_w, dim=-1)
-                ema_probs_x_ulb_w = self.call_hook("dist_align", "DistAlignHook", probs_x_ulb=ema_probs_x_ulb_w.detach())
+                if getattr(self.args, 'use_da', True):
+                    ema_probs_x_ulb_w = self.call_hook("dist_align", "DistAlignHook", probs_x_ulb=ema_probs_x_ulb_w.detach())
             self.ema.restore()
             feat_dict = {'x_lb': ema_feats_x_lb, 'x_ulb_w':ema_feats_x_ulb_w, 'x_ulb_s':feats_x_ulb_s}
 
@@ -255,4 +270,6 @@ class SimMatch(AlgorithmBase):
             SSL_Argument('--in_loss_ratio', float, 1.0),
             SSL_Argument('--smoothing_alpha', float, 0.9),
             SSL_Argument('--da_len', int, 256),
+            SSL_Argument('--da_p_target_type', str, 'uniform'),
+            SSL_Argument('--da_p_target', str, None),
         ]

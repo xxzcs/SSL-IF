@@ -2,6 +2,7 @@
 # Licensed under the MIT License.
 
 import torch
+import torch.nn.functional as F
 from semilearn.core.algorithmbase import AlgorithmBase
 from semilearn.core.utils import ALGORITHMS
 from semilearn.algorithms.hooks import PseudoLabelingHook, FixedThresholdingHook
@@ -12,7 +13,7 @@ from semilearn.algorithms.utils import SSL_Argument, str2bool
 class ReFixMatch(AlgorithmBase):
 
     """
-        ReFixMatch algorithm (https://arxiv.org/abs/2001.07685).
+        ReFixMatch algorithm (https://arxiv.org/abs/2308.07509).
 
         Args:
             - args (`argparse`):
@@ -44,6 +45,30 @@ class ReFixMatch(AlgorithmBase):
         self.register_hook(PseudoLabelingHook(), "PseudoLabelingHook")
         self.register_hook(FixedThresholdingHook(), "MaskingHook")
         super().set_hooks()
+
+    def compute_refixmatch_unsup_loss(self, logits_x_ulb_w, logits_x_ulb_s,
+                                      pseudo_label, high_confidence_mask):
+        """Compute the two complementary ReFixMatch unlabeled losses.
+
+        High-confidence examples use hard pseudo-label cross entropy.  The
+        remaining low-confidence examples use a sharpened weak prediction as
+        the soft target for KL divergence (paper equations 3--6).  Both terms
+        are averaged over the full unlabeled batch, as in the paper.
+        """
+        high_mask = high_confidence_mask.float()
+        low_mask = 1.0 - high_mask
+
+        hard_loss = self.consistency_loss(
+            logits_x_ulb_s, pseudo_label, 'ce', mask=high_mask)
+
+        soft_target = F.softmax(logits_x_ulb_w.detach() / self.T, dim=-1)
+        per_sample_kl = F.kl_div(
+            F.log_softmax(logits_x_ulb_s, dim=-1),
+            soft_target,
+            reduction='none',
+        ).sum(dim=-1)
+        soft_loss = (per_sample_kl * low_mask).mean()
+        return hard_loss, soft_loss
 
     def train_step(self, x_lb, y_lb, x_ulb_w, x_ulb_s):
         num_lb = y_lb.shape[0]
@@ -86,27 +111,22 @@ class ReFixMatch(AlgorithmBase):
             # generate unlabeled targets using pseudo label hook
             pseudo_label = self.call_hook("gen_ulb_targets", "PseudoLabelingHook", 
                                                 logits=probs_x_ulb_w,
-                                                use_hard_label=self.use_hard_label,
+                                                use_hard_label=True,
                                                 T=self.T,
                                                 softmax=False)
 
-            unsup_loss = self.consistency_loss(logits_x_ulb_s,
-                                                pseudo_label,
-                                                'ce',
-                                                mask=mask)
-
-            unsup_loss_refix = self.consistency_loss(logits_x_ulb_s,
-                                                probs_x_ulb_w,
-                                                'kl',
-                                                mask=mask)
+            unsup_loss, unsup_loss_refix = self.compute_refixmatch_unsup_loss(
+                logits_x_ulb_w, logits_x_ulb_s, pseudo_label, mask)
 
             total_loss = sup_loss + self.lambda_u * unsup_loss + self.lambda_u * unsup_loss_refix
 
         out_dict = self.process_out_dict(loss=total_loss, feat=feat_dict)
         log_dict = self.process_log_dict(sup_loss=sup_loss.item(), 
                                                 unsup_loss=unsup_loss.item(), 
+                                                unsup_loss_refix=unsup_loss_refix.item(),
                                                 total_loss=total_loss.item(), 
-                                                util_ratio=mask.float().mean().item())
+                                                util_ratio=mask.float().mean().item(),
+                                                low_conf_ratio=(1.0 - mask.float()).mean().item())
         return out_dict, log_dict
         
 

@@ -20,7 +20,8 @@ class LoggingHook(Hook):
                     else:
                         print_text += " "
 
-                print_text += "BEST_EVAL_ACC: {:.4f}, at {:d} iters".format(algorithm.best_eval_acc, algorithm.best_it + 1)
+                best_metric_name = getattr(algorithm, 'best_eval_metric_name', getattr(algorithm, 'best_metric', 'acc'))
+                print_text += "BEST_EVAL_{}: {:.4f}, at {:d} iters".format(best_metric_name.upper(), algorithm.best_eval_acc, algorithm.best_it + 1)
                 # algorithm.print_fn(f"{algorithm.it + 1} iteration, USE_EMA: {algorithm.ema_m != 0}, {algorithm.log_dict}, BEST_EVAL_ACC: {algorithm.best_eval_acc}, at {algorithm.best_it + 1} iters")
                 algorithm.print_fn(print_text)
             

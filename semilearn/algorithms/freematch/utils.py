@@ -16,9 +16,9 @@ class FreeMatchThresholingHook(MaskingHook):
         self.num_classes = num_classes
         self.m = momentum
         
-        self.p_model = torch.ones((self.num_classes)) / self.num_classes
-        self.label_hist = torch.ones((self.num_classes)) / self.num_classes
-        self.time_p = self.p_model.mean()
+        self.p_model = torch.ones((self.num_classes)) / self.num_classes # predicted model distribution
+        self.label_hist = torch.ones((self.num_classes)) / self.num_classes # category distribution history
+        self.time_p = self.p_model.mean()    # dynamic threshold
     
     @torch.no_grad()
     def update(self, algorithm, probs_x_ulb):
@@ -28,9 +28,9 @@ class FreeMatchThresholingHook(MaskingHook):
 
         if algorithm.use_quantile:
             self.time_p = self.time_p * self.m + (1 - self.m) * torch.quantile(max_probs,0.8) #* max_probs.mean()
-        else:
-            self.time_p = self.time_p * self.m + (1 - self.m) * max_probs.mean()
-        
+        else:  #false
+            self.time_p = self.time_p * self.m + (1 - self.m) * max_probs.mean() 
+         
         if algorithm.clip_thresh:
             self.time_p = torch.clip(self.time_p, 0.0, 0.95)
 

@@ -1,98 +1,424 @@
-# Copyright (c) Microsoft Corporation.
-# Licensed under the MIT License.
-
-
+import argparse
+import logging
+import math
 import os
+import random
+import shutil
+import time
+from collections import OrderedDict
+
+import csv
 import numpy as np
 import torch
-from torch.utils.data import DataLoader
-from semilearn.core.utils import get_net_builder, get_dataset
+import torch.nn.functional as F
+import torch.optim as optim
+from torch.optim.lr_scheduler import LambdaLR
+from torch.utils.data import DataLoader, RandomSampler, SequentialSampler
+from torch.utils.data.distributed import DistributedSampler
+# from torch.utils.tensorboard import SummaryWriter
+from tqdm import tqdm
+from models.resnet import resnet18 
+import torchvision.transforms as transforms
+import torchvision.datasets as datasets
 
+from dataset.busdataset import get_bus
+from utils import AverageMeter, accuracy
 
-if __name__ == "__main__":
-    import argparse
-    parser = argparse.ArgumentParser()
+import torchvision.models as models
 
-    parser.add_argument('--load_path', type=str, required=True)
+logger = logging.getLogger(__name__)
+best_acc = 0
+mean=(0.371, 0.371, 0.372)
+std=(0.167, 0.167, 0.167)
 
+def save_checkpoint(state, epoch, is_best, checkpoint, filename='checkpoint.pth.tar'):
     '''
-    Backbone Net Configurations
-    '''
-    parser.add_argument('--net', type=str, default='wrn_28_2')
-    parser.add_argument('--net_from_name', type=bool, default=False)
+    filepath = os.path.join(checkpoint, filename)
 
+    torch.save(state, filepath)
+    if is_best:
+        shutil.copyfile(filepath, os.path.join(checkpoint,
+                                               'model_best.pth.tar'))
     '''
-    Data Configurations
-    '''
-    parser.add_argument('--batch_size', type=int, default=128)
-    parser.add_argument('--data_dir', type=str, default='./data')
-    parser.add_argument('--dataset', type=str, default='cifar10')
-    parser.add_argument('--num_classes', type=int, default=10)
-    parser.add_argument('--img_size', type=int, default=32)
-    parser.add_argument('--crop_ratio', type=int, default=0.875)
-    parser.add_argument('--max_length', type=int, default=512)
-    parser.add_argument('--max_length_seconds', type=float, default=4.0)
-    parser.add_argument('--sample_rate', type=int, default=16000)
+    new_filename = filename[0:-8] + str(epoch) + '.pth.tar'
+    torch.save(state, os.path.join(checkpoint, new_filename))
+    if is_best:
+        best_name = 'model_best' + str(epoch) + '.pth.tar'
+        shutil.copyfile(os.path.join(checkpoint, new_filename), os.path.join(checkpoint, best_name))
+
+def set_seed(args):
+    random.seed(args.seed)
+    np.random.seed(args.seed)
+    torch.manual_seed(args.seed)
+    if args.n_gpu > 0:
+        torch.cuda.manual_seed_all(args.seed)
+
+
+def get_cosine_schedule_with_warmup(optimizer,
+                                    num_warmup_steps,
+                                    num_training_steps,
+                                    num_cycles=7./16.,
+                                    last_epoch=-1):
+    def _lr_lambda(current_step):
+        if current_step < num_warmup_steps:
+            return float(current_step) / float(max(1, num_warmup_steps))
+        no_progress = float(current_step - num_warmup_steps) / \
+            float(max(1, num_training_steps - num_warmup_steps))
+        return max(0., math.cos(math.pi * num_cycles * no_progress))
+
+    return LambdaLR(optimizer, _lr_lambda, last_epoch)
+
+
+def interleave(x, size):
+    s = list(x.shape)
+    return x.reshape([-1, size] + s[1:]).transpose(0, 1).reshape([-1] + s[1:])
+
+
+def de_interleave(x, size):
+    s = list(x.shape)
+    return x.reshape([size, -1] + s[1:]).transpose(0, 1).reshape([-1] + s[1:])
+
+
+
+def _load_and_test(model_path, model, optimizer, scheduler, ema_model, test_loader, val_dataset, args, write_csv=True):
+    checkpoint = torch.load(model_path)
+    best_acc = checkpoint['best_acc']
+    args.start_epoch = checkpoint['epoch']
+    model.load_state_dict(checkpoint['state_dict'])
+    if args.use_ema:
+        ema_model.ema.load_state_dict(checkpoint['ema_state_dict'])
+    optimizer.load_state_dict(checkpoint['optimizer'])
+    scheduler.load_state_dict(checkpoint['scheduler'])
+    test_model = ema_model.ema if args.use_ema else model
+    if args.local_rank in [-1, 0]:
+        epoch = args.start_epoch
+        csvname = args.csvname if write_csv else None
+        test_loss, test_acc = test(args, test_loader, test_model, epoch, val_dataset, csvname)
+        logger.info('Best top-1 acc: {:.2f}'.format(best_acc))
+    return test_model, best_acc
+
+def main():
+    
+        
+    parser = argparse.ArgumentParser(description='PyTorch FixMatch Training')
+    parser.add_argument('--gpu-id', default='0', type=int,
+                        help='id(s) for CUDA_VISIBLE_DEVICES')
+    parser.add_argument('--num-workers', type=int, default=4,
+                        help='number of workers')
+    parser.add_argument('--dataset', default='bus', type=str,
+                        choices=['cifar10', 'bus', 'cifar100'],
+                        help='dataset name')
+    parser.add_argument('--num-labeled', type=int, default=878,
+                        help='number of labeled data')
+    parser.add_argument("--expand-labels", action="store_true",
+                        help="expand labels to fit eval steps")
+    parser.add_argument('--arch', default='resnet18', type=str,
+                        choices=['wideresnet', 'resnet18', 'resnext'],
+                        help='net name')
+    parser.add_argument('--total-steps', default=1400, type=int,
+                        help='number of total steps to run')
+    parser.add_argument('--eval-step', default=28, type=int,
+                        help='number of eval steps to run')
+    parser.add_argument('--start-epoch', default=0, type=int,
+                        help='manual epoch number (useful on restarts)')
+    parser.add_argument('--batch-size', default=32, type=int,
+                        help='train batchsize')
+    parser.add_argument('--lr', '--learning-rate', default=0.01875, type=float,
+                        help='initial learning rate') #0.3
+    parser.add_argument('--warmup', default=0, type=float,
+                        help='warmup epochs (unlabeled data based)')
+    parser.add_argument('--wdecay', default=5e-4, type=float,
+                        help='weight decay')
+    parser.add_argument('--nesterov', action='store_true', default=True,
+                        help='use nesterov momentum')
+    parser.add_argument('--use-ema', action='store_true', default=True,
+                        help='use EMA model')
+    parser.add_argument('--ema-decay', default=0.999, type=float,
+                        help='EMA decay rate')
+    parser.add_argument('--mu', default=5, type=int,
+                        help='coefficient of unlabeled batch size')
+    parser.add_argument('--lambda-u', default=1, type=float,
+                        help='coefficient of unlabeled loss')
+    parser.add_argument('--T', default=1, type=float,
+                        help='pseudo label temperature')
+    parser.add_argument('--threshold', default=0.7, type=float,
+                        help='pseudo label threshold') #0.7
+    parser.add_argument('--out', default='result',
+                        help='directory to output the result')
+    parser.add_argument('--resume', default='', type=str,
+                        help='path to latest checkpoint (default: none)')
+    parser.add_argument('--seed', default=None, type=int,
+                        help="random seed")
+    parser.add_argument("--amp", action="store_true",
+                        help="use 16-bit (mixed) precision through NVIDIA apex AMP")
+    parser.add_argument("--opt_level", type=str, default="O1",
+                        help="apex AMP optimization level selected in ['O0', 'O1', 'O2', and 'O3']."
+                        "See details at https://nvidia.github.io/apex/amp.html")
+    parser.add_argument("--local_rank", type=int, default=-1,
+                        help="For distributed training: local_rank")
+    parser.add_argument('--no-progress', action='store_true',
+                        help="don't use progress bar")
+    parser.add_argument('--labeledpath', default='', type=str, metavar='LPATH',
+                    help='path of the labeled data')
+    parser.add_argument('--unlabeledpath', default='', type=str, metavar='ULPATH',
+                    help='path of the unlabeled data')
+    parser.add_argument('--csvname', type=str, help='csv file name')
+    parser.add_argument('--use-best-model', action='store_true', 
+    help='use the best model (model_bestXX.pth.tar) if set')
 
     args = parser.parse_args()
-    
-    checkpoint_path = os.path.join(args.load_path)
-    checkpoint = torch.load(checkpoint_path)
-    load_model = checkpoint['ema_model']
-    load_state_dict = {}
-    for key, item in load_model.items():
-        if key.startswith('module'):
-            new_key = '.'.join(key.split('.')[1:])
-            load_state_dict[new_key] = item
+    global best_acc
+   
+    if args.local_rank == -1:
+        device = torch.device('cuda', args.gpu_id)
+        args.world_size = 1
+        args.n_gpu = torch.cuda.device_count()
+    else:
+        torch.cuda.set_device(args.local_rank)
+        device = torch.device('cuda', args.local_rank)
+        torch.distributed.init_process_group(backend='nccl')
+        args.world_size = torch.distributed.get_world_size()
+        args.n_gpu = 1
+    # print args.world_size, which indicates the utilized count of GPUs 
+    args.device = device
+
+    logging.basicConfig(
+        format="%(asctime)s - %(levelname)s - %(name)s -   %(message)s",
+        datefmt="%m/%d/%Y %H:%M:%S",
+        level=logging.INFO if args.local_rank in [-1, 0] else logging.WARN)
+
+    logger.warning(
+        f"Process rank: {args.local_rank}, "
+        f"device: {args.device}, "
+        f"n_gpu: {args.n_gpu}, "
+        f"distributed training: {bool(args.local_rank != -1)}, "
+        f"16-bits training: {args.amp}",)
+
+    logger.info(dict(args._get_kwargs()))
+
+    if args.seed is not None:
+        set_seed(args)
+    '''
+    if args.local_rank in [-1, 0]:
+        os.makedirs(args.out, exist_ok=True)
+        args.writer = SummaryWriter(args.out)
+    '''
+    # declare the dataset and model used for our dataset
+    if args.local_rank not in [-1, 0]:
+        torch.distributed.barrier()
+
+    # labeled_dataset, unlabeled_dataset, val_dataset = get_bus(
+        # args, '../uda_data')
+
+    if args.local_rank == 0:
+        torch.distributed.barrier()
+
+    valdir = '../uda_data/test'
+    val_dataset = datasets.ImageFolder(
+        valdir, 
+        transforms.Compose([
+            transforms.Resize(224),
+            transforms.CenterCrop(224),
+            transforms.ToTensor(),
+            transforms.Normalize(mean=mean, std=std)]))
+    test_loader = DataLoader(
+        val_dataset,
+        sampler=SequentialSampler(val_dataset),
+        batch_size=args.batch_size,
+        num_workers=args.num_workers)
+
+    if args.local_rank not in [-1, 0]:
+        torch.distributed.barrier()
+
+
+    # model = models.__dict__[args.arch]()
+    # num_ftrs = model.fc.in_features
+    # model.fc = torch.nn.Linear(num_ftrs, 2)
+    model = resnet18()
+
+    if args.local_rank == 0:
+        torch.distributed.barrier()
+
+    model.to(args.device)
+
+    no_decay = ['bias', 'bn']
+    grouped_parameters = [
+        {'params': [p for n, p in model.named_parameters() if not any(
+            nd in n for nd in no_decay)], 'weight_decay': args.wdecay},
+        {'params': [p for n, p in model.named_parameters() if any(
+            nd in n for nd in no_decay)], 'weight_decay': 0.0}
+    ]
+    optimizer = optim.SGD(grouped_parameters, lr=args.lr,
+                          momentum=0.9, nesterov=args.nesterov)
+
+    args.epochs = math.ceil(args.total_steps / args.eval_step)
+    scheduler = get_cosine_schedule_with_warmup(
+        optimizer, args.warmup, args.total_steps)
+
+    if args.use_ema:
+        from models.ema import ModelEMA
+        ema_model = ModelEMA(args, model, args.ema_decay)
+
+    args.start_epoch = 0
+
+
+    if args.resume:
+        logger.info("==> Resuming from checkpoint directory '{}'..".format(args.resume))
+        if args.use_best_model:
+            import re
+            all_list = os.listdir(args.resume)
+            best_models = [f for f in all_list if f.startswith('model_best') and f.endswith('.pth.tar')]
+            max_epoch = -1
+            best_model_file = None
+            for f in best_models:
+                match = re.search(r'model_best(\d+).pth.tar', f)
+                if match:
+                    epoch = int(match.group(1))
+                    if epoch > max_epoch:
+                        max_epoch = epoch
+                        best_model_file = f
+            if best_model_file is None:
+                raise FileNotFoundError('No model_bestXX.pth.tar found in {}'.format(args.resume))
+            best_model_path = os.path.join(args.resume, best_model_file)
+            print("loading best model: " + best_model_path)
+            test_model, best_acc = _load_and_test(best_model_path, model, optimizer, scheduler, ema_model if args.use_ema else None, test_loader, val_dataset, args)
         else:
-            load_state_dict[key] = item
-    save_dir = '/'.join(checkpoint_path.split('/')[:-1])
-    args.save_dir = save_dir
-    args.save_name = ''
-    
-    net = get_net_builder(args.net, args.net_from_name)(num_classes=args.num_classes)
-    keys = net.load_state_dict(load_state_dict)
-    if torch.cuda.is_available():
-        net.cuda()
-    net.eval()
-    
-    # specify these arguments manually 
-    args.num_labels = 40
-    args.ulb_num_labels = 49600
-    args.lb_imb_ratio = 1
-    args.ulb_imb_ratio = 1
-    args.seed = 0
-    args.epoch = 1
-    args.num_train_iter = 1024
-    dataset_dict = get_dataset(args, 'fixmatch', args.dataset, args.num_labels, args.num_classes, args.data_dir, False)
-    eval_dset = dataset_dict['eval']
-    eval_loader = DataLoader(eval_dset, batch_size=args.batch_size, drop_last=False, shuffle=False, num_workers=4)
- 
-    acc = 0.0
-    test_feats = []
-    test_preds = []
-    test_probs = []
-    test_labels = []
+            model_list = ['checkpoint47.pth.tar','checkpoint48.pth.tar','checkpoint49.pth.tar']
+            acc_list = []
+            all_list = os.listdir(args.resume)
+            for modelname in model_list:
+                model_path = os.path.join(args.resume, modelname)
+                print("loading checkpoint: " + model_path)
+                args.out = os.path.dirname(model_path)
+                test_model, best_acc = _load_and_test(model_path, model, optimizer, scheduler, ema_model if args.use_ema else None, test_loader, val_dataset, args, write_csv=False)
+                acc_list.append(best_acc)
+            best_model_index = 0
+            best_acc1 = acc_list[0]
+            for i in range(1, len(acc_list)):
+                if acc_list[i] >= best_acc1:
+                    best_model_index = i
+                    best_acc1 = acc_list[i]
+            best_model_name = model_list[best_model_index]
+            print("loading best model name: " + best_model_name)
+            best_model_path = os.path.join(args.resume, best_model_name)
+            test_model, best_acc = _load_and_test(best_model_path, model, optimizer, scheduler, ema_model if args.use_ema else None, test_loader, val_dataset, args)
+
+    if args.local_rank not in [-1, 0]:
+        torch.distributed.barrier()
+
+
+
+    '''
+    if args.local_rank in [-1, 0]:
+        args.writer.close()
+    '''
+    if args.amp:
+        from apex import amp
+        model, optimizer = amp.initialize(
+            model, optimizer, opt_level=args.opt_level)
+
+    if args.local_rank != -1:
+        model = torch.nn.parallel.DistributedDataParallel(
+            model, device_ids=[args.local_rank],
+            output_device=args.local_rank, find_unused_parameters=True)
+
+    # def _load_and_test(model_path, model, optimizer, scheduler, ema_model, test_loader, val_dataset, args):
+    #     checkpoint = torch.load(model_path)
+    #     best_acc = checkpoint['best_acc']
+    #     args.start_epoch = checkpoint['epoch']
+    #     model.load_state_dict(checkpoint['state_dict'])
+    #     if args.use_ema and ema_model is not None:
+    #         ema_model.ema.load_state_dict(checkpoint['ema_state_dict'])
+    #     optimizer.load_state_dict(checkpoint['optimizer'])
+    #     scheduler.load_state_dict(checkpoint['scheduler'])
+    #     test_model = ema_model.ema if args.use_ema and ema_model is not None else model
+    #     if args.local_rank in [-1, 0]:
+    #         epoch = args.start_epoch
+    #         test_loss, test_acc = test(args, test_loader, test_model, epoch, val_dataset, args.csvname)
+    #         logger.info('Best top-1 acc: {:.2f}'.format(best_acc))
+    #     return test_model, best_acc
+
+def test(args, test_loader, model, epoch, val_dataset=None, csvname=None):
+    batch_time = AverageMeter()
+    data_time = AverageMeter()
+    losses = AverageMeter()
+    top1 = AverageMeter()
+    top2 = AverageMeter()
+    end = time.time()
+
+    if not args.no_progress:
+        test_loader = tqdm(test_loader,
+                           disable=args.local_rank not in [-1, 0])
+
+    classes = ('benign','malignant')
+    N_CLASSES = 2
+
+    class_correct = list(0. for i in range(N_CLASSES))
+    class_total = list(0. for i in range(N_CLASSES))
+
+    write_csv = csvname is not None and val_dataset is not None
+    if write_csv:
+        csvfile = open(csvname, "a")
+        writer = csv.writer(csvfile)
+        writer.writerow(['imagename', 'gt_label', 'gtname', 'p1','p2'])
+
     with torch.no_grad():
-        for data in eval_loader:
-            image = data['x_lb']
-            target = data['y_lb']
+        for batch_idx, (inputs, targets) in enumerate(test_loader):
+            data_time.update(time.time() - end)
+            model.eval()
 
-            image = image.type(torch.FloatTensor).cuda()
-            feat = net(image, only_feat=True)
-            logit = net(feat, only_fc=True)
-            prob = logit.softmax(dim=-1)
-            pred = prob.argmax(1)
+            inputs = inputs.to(args.device)
+            targets = targets.to(args.device)
+            outputs = model(inputs)
+            loss = F.cross_entropy(outputs, targets)
 
-            acc += pred.cpu().eq(target).numpy().sum()
+            # compute the predict accuracy for each category
+            class_result = outputs.argmax(dim=1)
+            c = (class_result == targets).squeeze()
+            for i in range(len(targets)):
+                _label = targets[i]
+                class_correct[_label] += c[i].item()
+                class_total[_label] += 1
 
-            test_feats.append(feat.cpu().numpy())
-            test_preds.append(pred.cpu().numpy())
-            test_probs.append(prob.cpu().numpy())
-            test_labels.append(target.cpu().numpy())
-    test_feats = np.concatenate(test_feats)
-    test_preds = np.concatenate(test_preds)
-    test_probs = np.concatenate(test_probs)
-    test_labels = np.concatenate(test_labels)
+            prec1, prec2 = accuracy(outputs, targets, topk=(1, 2))
+            losses.update(loss.item(), inputs.shape[0])
+            top1.update(prec1.item(), inputs.shape[0])
+            top2.update(prec2.item(), inputs.shape[0])
+            batch_time.update(time.time() - end)
+            end = time.time()
 
-    print(f"Test Accuracy: {acc/len(eval_dset)}")
+            if write_csv:
+                output_softmax = F.softmax(outputs, dim=1)
+                pp_list = output_softmax.tolist()
+                batch_number = len(inputs)
+                for j in range(batch_number):
+                    img_name = os.path.basename(val_dataset.imgs[j + batch_idx * args.batch_size][0])
+                    gt_label = val_dataset.imgs[j + batch_idx * args.batch_size][1]
+                    benign_probability = pp_list[j][0]
+                    malignant_probability = pp_list[j][1]
+                    cls_name = 'benign' if gt_label ==0 else 'malignant'
+                    writer.writerow([img_name, gt_label, cls_name, round(benign_probability,9), round(malignant_probability,9)])
+
+            if not args.no_progress:
+                test_loader.set_description("Test Iter: {batch:4}/{iter:4}. Data: {data:.3f}s. Batch: {bt:.3f}s. Loss: {loss:.4f}. top1: {top1:.2f}. top2: {top2:.2f}. ".format(
+                    batch=batch_idx + 1,
+                    iter=len(test_loader),
+                    data=data_time.avg,
+                    bt=batch_time.avg,
+                    loss=losses.avg,
+                    top1=top1.avg,
+                    top2=top2.avg,
+                ))
+        if not args.no_progress:
+            test_loader.close()
+        for i in range(N_CLASSES):
+            print('Accuracy of %5s (%3d of %3d): %2d %%' % (
+                            classes[i], class_correct[i], class_total[i], 100 * class_correct[i] / class_total[i]))
+    if write_csv:
+        csvfile.close()
+    logger.info("top-1 acc: {:.2f}".format(top1.avg))
+    logger.info("top-2 acc: {:.2f}".format(top2.avg))
+    return losses.avg, top1.avg
+
+if __name__ == '__main__':
+    main()

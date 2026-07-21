@@ -1,0 +1,65 @@
+algorithm: simmatch_ifrank
+save_dir: ./saved_models/usb_cv/
+save_name: simmatch_ifrank_bus_878_0
+resume: False
+load_path: ./saved_models/usb_cv/simmatch_ifrank_bus_878_0/latest_model.pth
+overwrite: True
+use_tensorboard: True
+use_wandb: False
+epoch: 50
+num_train_iter: 5500
+num_log_iter: 110
+num_eval_iter: 110
+batch_size: 8
+eval_batch_size: 16
+num_warmup_iter: 220
+num_labels: 878
+uratio: 30
+ema_m: 0.999
+# ----- SimMatch 专属超参 (与 v1 BUS 完全一致, 保证可比) -----
+T: 0.1
+p_cutoff: 0.9
+proj_size: 128
+K: 256
+in_loss_ratio: 5.0
+ulb_loss_ratio: 10.0
+smoothing_alpha: 0.9
+da_len: 256
+use_epass: False
+use_da: True
+# ----- 新增 influence-rank 一致性超参 -----
+ifrank_lambda: 1.0        # 0 => 退化为原版 SimMatch (消融基线); 由跑脚本扫
+ifrank_T: 0.5             # affinity softmax 温度 (对应原方法 corrT)
+ifrank_k: 4               # 参考样本数 (排列复杂度 k!)
+ifrank_combine: multiply  # ''=纯 influence; 'multiply'=influence×余弦 (你 FixMatch 最佳设置)
+# -------------------------------------------------------------
+img_size: 224
+crop_ratio: 0.875
+optim: SGD
+lr: 0.0046875
+sched: linear
+lr_drop_iter: 1650 3300 4950
+layer_decay: 1.0
+momentum: 0.9
+weight_decay: 0.0005
+amp: False
+clip: 0.0
+use_cat: True
+net: resnet18
+net_from_name: False
+data_dir: ../uda_data
+dataset: bus
+train_sampler: RandomSampler
+num_classes: 2
+num_workers: 4
+seed: 0
+world_size: 1
+rank: 0
+multiprocessing_distributed: False
+dist_url: tcp://127.0.0.1:10061
+dist_backend: nccl
+gpu: None
+use_pretrain: False
+lpath: ../data_split/28/labeled_images_20_9.pth
+ulpath: ../data_split/28/unlabeled_images_80_9.pth
+pretrain_path: https://download.pytorch.org/models/resnet18-5c106cde.pth

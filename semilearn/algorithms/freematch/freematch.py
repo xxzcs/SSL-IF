@@ -94,7 +94,7 @@ class FreeMatch(AlgorithmBase):
             sup_loss = self.ce_loss(logits_x_lb, y_lb, reduction='mean')
 
             # calculate mask
-            mask = self.call_hook("masking", "MaskingHook", logits_x_ulb=logits_x_ulb_w)
+            mask = self.call_hook("masking", "MaskingHook", logits_x_ulb=logits_x_ulb_w) #"masking" is the method need to be called in MaskingHook function
 
 
             # generate unlabeled targets using pseudo label hook
