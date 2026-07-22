@@ -43,6 +43,9 @@ class SimMatchIF(SimMatch):
         self.use_strong_if = bool(getattr(args, 'use_strong_if', False))
         self.ifrank_mode = getattr(args, 'ifrank_mode', 'add') or 'add'
         assert self.ifrank_mode in ('add', 'replace', 'in_fuse', 'teacher_fuse'), f"未知 ifrank_mode: {self.ifrank_mode}"
+        self.ifrank_warmup_epochs = int(getattr(args, 'ifrank_warmup_epochs', 1))
+        self.ifrank_warmup_mode = getattr(args, 'ifrank_warmup_mode', 'zero') or 'zero'
+        assert self.ifrank_warmup_mode in ('zero', 'rampup'), f"未知 ifrank_warmup_mode: {self.ifrank_warmup_mode}"
         # in_fuse: 把 IF 作为乘性因子融进 SimMatch in_loss 的 teacher 分布。
         # strength=0 -> 各类影响权重均匀 -> 对 in_loss 无影响(=原版 SimMatch); 越大 IF 调制越强。
         self.if_fuse_strength = float(getattr(args, 'if_fuse_strength', 1.0))
@@ -61,6 +64,14 @@ class SimMatchIF(SimMatch):
         self.ref_cand_k = int(getattr(args, 'ref_cand_k', 8))
         self._perms = torch.tensor(
             list(itertools.permutations(range(self.num_references))), dtype=torch.long)
+
+    def ifrank_warmup_coef(self):
+        warmup = self.ifrank_warmup_epochs
+        if warmup <= 0:
+            return 1.0
+        if self.ifrank_warmup_mode == 'rampup':
+            return min(1.0, max(0.0, float(self.epoch + 1) / float(warmup)))
+        return 0.0 if self.epoch < warmup else 1.0
 
     def _plackett_luce(self, aff):
         perms = self._perms.to(aff.device)
@@ -363,8 +374,7 @@ class SimMatchIF(SimMatch):
                 ifrank_loss = self._ifrank_loss(
                     logits_x_lb, y_lb, ema_logits_x_ulb_w, logits_x_ulb_s,
                     phi_x_lb, phi_x_ulb_w, phi_x_ulb_s)
-            if self.epoch == 0:
-                ifrank_loss = ifrank_loss * 0.0
+            ifrank_loss = ifrank_loss * self.ifrank_warmup_coef()
 
             total_loss = sup_loss + self.lambda_u * unsup_loss
             if self.ifrank_mode in ('add', 'in_fuse', 'teacher_fuse'):
@@ -400,5 +410,7 @@ class SimMatchIF(SimMatch):
             SSL_Argument('--if_target', str, 'soft'),        # soft=忠实my_celoss(p·Σlogits−logits); hard=旧argmax
             SSL_Argument('--if_mean_reduce', str2bool, True), # 复刻my_celoss批规约(multiplyo需要;balanced无所谓)
             SSL_Argument('--if_mask', str2bool, False),       # 置信度门控: 只对高置信无标注算IF排序损失
+            SSL_Argument('--ifrank_warmup_epochs', int, 1),
+            SSL_Argument('--ifrank_warmup_mode', str, 'zero'),
         ])
         return argument
