@@ -9,6 +9,7 @@ from semilearn.algorithms.flexmatch.flexmatch_ifcf import FlexMatchIFcf
 from semilearn.algorithms.softmatch.softmatch_ifcf import SoftMatchIFcf
 from semilearn.algorithms.adamatch.adamatch_ifcf import AdaMatchIFcf
 from semilearn.algorithms.fixmatch.fixmatch_ifcf import FixMatchIFcf
+from semilearn.algorithms.fixmatch.fixmatch_dif import FixMatchDIF
 from semilearn.algorithms.refixmatch.refixmatch_ifcf import ReFixMatchIFcf
 from semilearn.algorithms.defixmatch.defixmatch_ifcf import DeFixMatchIFcf
 from semilearn.core.utils import ALGORITHMS
@@ -18,6 +19,7 @@ ALGORITHMS['flexmatch_ifcf'] = FlexMatchIFcf
 ALGORITHMS['softmatch_ifcf'] = SoftMatchIFcf
 ALGORITHMS['adamatch_ifcf'] = AdaMatchIFcf
 ALGORITHMS['fixmatch_ifcf'] = FixMatchIFcf
+ALGORITHMS['fixmatch_dif'] = FixMatchDIF
 ALGORITHMS['refixmatch_ifcf'] = ReFixMatchIFcf
 ALGORITHMS['defixmatch_ifcf'] = DeFixMatchIFcf
 try:
@@ -28,6 +30,7 @@ try:
         _algs.name2alg['softmatch_ifcf'] = SoftMatchIFcf
         _algs.name2alg['adamatch_ifcf'] = AdaMatchIFcf
         _algs.name2alg['fixmatch_ifcf'] = FixMatchIFcf
+        _algs.name2alg['fixmatch_dif'] = FixMatchDIF
         _algs.name2alg['refixmatch_ifcf'] = ReFixMatchIFcf
         _algs.name2alg['defixmatch_ifcf'] = DeFixMatchIFcf
 except Exception as _e:  # pragma: no cover
