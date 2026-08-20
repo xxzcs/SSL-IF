@@ -37,7 +37,7 @@ def parse_args():
     parser.add_argument('--model_key', type=str, default='model', choices=['model', 'ema_model'])
 
     parser.add_argument('--batch_size', type=int, default=16)
-    parser.add_argument('--num_workers', type=int, default=4)
+    parser.add_argument('--num_workers', type=int, default=0)
     parser.add_argument('--data_dir', type=str, default='../uda_data')
     parser.add_argument('--img_size', type=int, default=224)
     parser.add_argument('--crop_ratio', type=float, default=0.875)
@@ -60,6 +60,7 @@ def parse_args():
 
     parser.add_argument('--eval_dest', type=str, default='auto', choices=['auto', 'eval', 'test'])
     parser.add_argument('--summary_csv', type=str, default='')
+    parser.add_argument('--foldmean_csv', type=str, default='')
     parser.add_argument('--method_suffix', type=str, default='',
                         help='Optional suffix appended to inferred method name, e.g. best or latest')
 
@@ -135,7 +136,7 @@ def append_summary_csv(csv_path, method_name, pooled_summary, num_checkpoints, n
 
     header = ['method', 'AUC', 'ACC', 'Sen', 'Spe', 'F1']
 
-    row = [method_name]
+    row = [f'{method_name}_pooled']
     for metric_name in METRIC_NAMES:
         metric = pooled_summary.get(metric_name)
         if metric is None:
@@ -161,6 +162,42 @@ def append_summary_csv(csv_path, method_name, pooled_summary, num_checkpoints, n
         writer.writerow(row)
 
     print(f'Saved pooled summary row for {method_name} to {csv_path}')
+
+
+def append_foldmean_csv(csv_path, method_name, fold_mean_stats):
+    if not csv_path or not fold_mean_stats:
+        return
+
+    os.makedirs(os.path.dirname(csv_path) or '.', exist_ok=True)
+
+    header = ['method', 'AUC', 'ACC', 'Sen', 'Spe', 'F1']
+    row = [f'{method_name}_foldmean']
+    summary = metric_summary(fold_mean_stats)
+    for metric_name in METRIC_NAMES:
+        metric = summary.get(metric_name)
+        if metric is None:
+            row.append('')
+        else:
+            row.append(f'{metric["mean"]:.6f}±{metric["std"]:.6f}')
+
+    write_header = not os.path.exists(csv_path) or os.path.getsize(csv_path) == 0
+    if not write_header:
+        with open(csv_path, 'r', newline='', encoding='utf-8') as csvfile:
+            reader = csv.reader(csvfile)
+            existing_header = next(reader, [])
+        if existing_header != header:
+            raise ValueError(
+                f'Existing CSV header does not match the current format in {csv_path}. '
+                f'Please remove the old file or choose a new --foldmean_csv path.'
+            )
+
+    with open(csv_path, 'a', newline='', encoding='utf-8') as csvfile:
+        writer = csv.writer(csvfile)
+        if write_header:
+            writer.writerow(header)
+        writer.writerow(row)
+
+    print(f'Saved fold-mean summary row for {method_name} to {csv_path}')
 
 
 def main():
@@ -209,7 +246,8 @@ def main():
             f'Overall pooled summary ({len(all_results)} checkpoint(s), direct aggregation, recommended for paper main result)',
             all_results,
         )
-        append_summary_csv(args.summary_csv, method_name, pooled_summary, len(all_results), len(per_fold_results))
+        if args.summary_csv and args.summary_csv != args.foldmean_csv:
+            append_summary_csv(args.summary_csv, method_name, pooled_summary, len(all_results), len(per_fold_results))
 
         fold_mean_stats = fold_mean_results(per_fold_results)
         if fold_mean_stats:
@@ -217,6 +255,7 @@ def main():
                 f'Overall fold-mean summary ({len(fold_mean_stats)} fold mean(s), recommended for fold-level analysis)',
                 fold_mean_stats,
             )
+            append_foldmean_csv(args.foldmean_csv, method_name, fold_mean_stats)
     else:
         print('No checkpoints were evaluated.')
 

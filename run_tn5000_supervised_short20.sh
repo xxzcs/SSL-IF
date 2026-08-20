@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+cd /home/xiexiaozheng/Semi-supervised-learning
+source ~/anaconda3/etc/profile.d/conda.sh 2>/dev/null || true
+conda activate wssl 2>/dev/null || true
+
+METHOD=supervised
+RATIO=20
+SEEDS=${SEEDS:-"1 2 3 4 5"}
+DATA_DIR=${DATA_DIR:-../uda_data/TN5000}
+FORCE_RERUN=${FORCE_RERUN:-0}
+SHORT_EPOCHS=${SHORT_EPOCHS:-10}
+
+# Keep the original split and plain CE; only shorten training.
+BATCH_SIZE=${BATCH_SIZE:-8}
+EVAL_BATCH_SIZE=${EVAL_BATCH_SIZE:-16}
+LR=${LR:-0.002}
+ITERS_PER_EPOCH=88
+TRAIN_ITER=${TRAIN_ITER:-$((SHORT_EPOCHS * ITERS_PER_EPOCH))}
+EVAL_ITER=${EVAL_ITER:-88}
+LOG_ITER=${LOG_ITER:-88}
+WARMUP_EPOCHS=${WARMUP_EPOCHS:-2}
+WARMUP_ITER=${WARMUP_ITER:-$((WARMUP_EPOCHS * ITERS_PER_EPOCH))}
+DROP1=${DROP1:-$((TRAIN_ITER * 3 / 10))}
+DROP2=${DROP2:-$((TRAIN_ITER * 6 / 10))}
+DROP3=${DROP3:-$((TRAIN_ITER * 9 / 10))}
+LR_DROP_ITER=${LR_DROP_ITER:-"${DROP1} ${DROP2} ${DROP3}"}
+SAVE_SUFFIX=${SAVE_SUFFIX:-short${SHORT_EPOCHS}e}
+
+METHOD="${METHOD}" \
+RATIO="${RATIO}" \
+SEEDS="${SEEDS}" \
+DATA_DIR="${DATA_DIR}" \
+BATCH_SIZE="${BATCH_SIZE}" \
+EVAL_BATCH_SIZE="${EVAL_BATCH_SIZE}" \
+LR="${LR}" \
+EPOCH_OVERRIDE="${SHORT_EPOCHS}" \
+TRAIN_ITER_OVERRIDE="${TRAIN_ITER}" \
+EVAL_ITER_OVERRIDE="${EVAL_ITER}" \
+LOG_ITER_OVERRIDE="${LOG_ITER}" \
+WARMUP_ITER_OVERRIDE="${WARMUP_ITER}" \
+LR_DROP_ITER_OVERRIDE="${LR_DROP_ITER}" \
+SAVE_SUFFIX="${SAVE_SUFFIX}" \
+FORCE_RERUN="${FORCE_RERUN}" \
+AUTO_EVAL=1 \
+EVAL_KINDS=latest \
+EVAL_THRESHOLD_MODES=default_0.5 \
+bash run_tn5000_ratio.sh

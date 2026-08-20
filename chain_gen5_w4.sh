@@ -3,7 +3,7 @@
 # 框架: FreeMatch/FlexMatch/SoftMatch/AdaMatch (均无关系项)。IF=#2 balanced/T0.9/强/soft。
 set -u
 cd /home/xiexiaozheng/Semi-supervised-learning
-SUMMARY=results/gen5_summary.csv
+SUMMARY=results/BUS_ALL_EXPERIMENTS.csv
 STAMP=$(date +%Y%m%d_%H%M%S); LOG=logs/gen5_${STAMP}.log
 mkdir -p logs results config
 source ~/anaconda3/etc/profile.d/conda.sh 2>/dev/null; conda activate wssl 2>/dev/null

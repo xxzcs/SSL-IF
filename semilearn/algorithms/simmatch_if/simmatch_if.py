@@ -58,10 +58,15 @@ class SimMatchIF(SimMatch):
         # 代表性样本选择器 (复刻 compute_corrfea.py):
         #   topk        : 纯弱 IF top-k (原插件行为, 作对照)
         #   by_instance : 原版默认 = 弱/强共同 top-(k//2) 支持 + 共同 top-(k-k//2) 反对
+        #   orthogonal  : rankmatch-style 正交锚点 (全局共享)
+        #   random      : 每个 batch 随机参考
+        #   support_only: 仅支持样本, 不再混入反对样本
         # ref_cand_k = 候选深度 (原版 args.k=8), 先取 top-cand 支持/反对再求弱强共同元素。
         self.ref_select = getattr(args, 'ref_select', 'topk') or 'topk'
-        assert self.ref_select in ('topk', 'by_instance'), f"未知 ref_select: {self.ref_select}"
+        assert self.ref_select in ('topk', 'by_instance', 'orthogonal', 'random', 'support_only'), f"未知 ref_select: {self.ref_select}"
         self.ref_cand_k = int(getattr(args, 'ref_cand_k', 8))
+        self.ifrank_score_mode = getattr(args, 'ifrank_score_mode', 'fused') or 'fused'
+        assert self.ifrank_score_mode in ('fused', 'cosine', 'if'), f"未知 ifrank_score_mode: {self.ifrank_score_mode}"
         self._perms = torch.tensor(
             list(itertools.permutations(range(self.num_references))), dtype=torch.long)
 
@@ -96,15 +101,69 @@ class SimMatchIF(SimMatch):
             return l1[:n]
         return common[:n]
 
-    def _select_ref_idx(self, IF_uw, IF_us, k):
+    def _select_global_orthogonal_ref_idx(self, phi_lb, k, batch_size):
+        L = phi_lb.shape[0]
+        if L <= k:
+            base_idx = torch.arange(L, device=phi_lb.device, dtype=torch.long)
+        else:
+            phi_lb_n = F.normalize(phi_lb.detach(), dim=1)
+            selected_mask = torch.zeros(L, dtype=torch.bool, device=phi_lb.device)
+            selected = []
+
+            first_idx = torch.randint(0, L, (1,), device=phi_lb.device).item()
+            selected.append(first_idx)
+            selected_mask[first_idx] = True
+
+            for _ in range(1, k):
+                selected_stack = phi_lb_n[selected]
+                cos_sim = torch.matmul(phi_lb_n, selected_stack.t()).abs()
+                max_cos = cos_sim.max(dim=1).values
+                max_cos[selected_mask] = 10.0
+                next_idx = max_cos.argmin().item()
+                selected.append(next_idx)
+                selected_mask[next_idx] = True
+
+            base_idx = torch.tensor(selected, device=phi_lb.device, dtype=torch.long)
+
+        return base_idx.unsqueeze(0).expand(batch_size, -1)
+
+    def _select_random_ref_idx(self, L, k, batch_size, device):
+        if L <= k:
+            base = torch.arange(L, device=device, dtype=torch.long)
+            return base.unsqueeze(0).expand(batch_size, -1)
+        rows = [torch.randperm(L, device=device)[:k] for _ in range(batch_size)]
+        return torch.stack(rows, dim=0)
+
+    def _select_ref_idx(self, IF_uw, IF_us, phi_lb, k):
         """返回每个无标注样本的 k 个参考(有标注)索引 [U,k]。
         topk        : 弱 IF top-k (原行为)。
-        by_instance : 弱/强共同 top-(k//2) 支持 + 共同 top-(k-k//2) 反对 (原版默认)。"""
+        by_instance : 弱/强共同 top-(k//2) 支持 + 共同 top-(k-k//2) 反对 (原版默认)。
+        orthogonal  : rankmatch-style 正交锚点。
+        random      : 随机参考。
+        support_only: 仅保留支持样本。"""
+        if self.ref_select == 'orthogonal':
+            return self._select_global_orthogonal_ref_idx(phi_lb, k, IF_uw.shape[0])
+        if self.ref_select == 'random':
+            return self._select_random_ref_idx(IF_uw.shape[1], k, IF_uw.shape[0], IF_uw.device)
         if self.ref_select == 'topk':
             return IF_uw.topk(k, dim=1).indices
         # by_instance
         L = IF_uw.shape[1]
         cand = min(self.ref_cand_k, L)
+        if self.ref_select == 'support_only':
+            prop_uw = IF_uw.topk(cand, dim=1).indices.tolist()
+            prop_us = IF_us.topk(cand, dim=1).indices.tolist()
+            rows = []
+            for i in range(len(prop_uw)):
+                sel = self._early_common(prop_uw[i], prop_us[i], k)
+                if len(sel) < k:
+                    for c in prop_uw[i]:
+                        if c not in sel:
+                            sel.append(c)
+                            if len(sel) == k:
+                                break
+                rows.append(sel[:k])
+            return torch.tensor(rows, device=IF_uw.device, dtype=torch.long)
         num_prop = max(1, k // 2)
         num_oppo = k - num_prop
         prop_uw = IF_uw.topk(cand, dim=1).indices.tolist()
@@ -189,6 +248,14 @@ class SimMatchIF(SimMatch):
         return infl
 
     def _fuse(self, ifs, cos):
+        if self.ifrank_score_mode == 'cosine':
+            return F.softmax(cos / self.corrT, dim=1)
+        if self.ifrank_score_mode == 'if':
+            if self.ifrank_combine == 'multiplyo':
+                if_score = ifs
+            else:
+                if_score = self._row_zscore(ifs)
+            return F.softmax(if_score / self.corrT, dim=1)
         # ifs: detached 影响分 [U,k]; cos: 余弦 [U,k] (强支 live)
         if self.ifrank_combine == 'gate':
             # 相乘门控: cos 相似度分布(基座) × softplus(β·zscore(IF)) 单调正门控, 再归一化。
@@ -240,7 +307,7 @@ class SimMatchIF(SimMatch):
                 g_l = g_l / max(L, 1); g_uw = g_uw / max(U, 1); g_us = g_us / max(U, 1)
             IF_uw = self.if_tracin_scale * (g_uw @ g_l.t()) * (phi_uw.detach() @ phi_lb_d.t())  # [U,L] 闭式IF×η
             IF_us = self.if_tracin_scale * (g_us @ g_l.t()) * (phi_us.detach() @ phi_lb_d.t())
-            ref_idx = self._select_ref_idx(IF_uw, IF_us, k)             # [U,k] topk 或 by_instance
+            ref_idx = self._select_ref_idx(IF_uw, IF_us, phi_lb_d, k)   # [U,k] 参考选择策略
             if_w = torch.gather(IF_uw, 1, ref_idx)
             if_s = torch.gather(IF_us if self.use_strong_if else IF_uw, 1, ref_idx)
             cos_w = torch.gather(F.normalize(phi_uw.detach(), dim=1) @ phi_lb_n.t(), 1, ref_idx)
@@ -407,6 +474,7 @@ class SimMatchIF(SimMatch):
             SSL_Argument('--if_fuse_strength', float, 1.0),
             SSL_Argument('--ref_select', str, 'topk'),
             SSL_Argument('--ref_cand_k', int, 8),
+            SSL_Argument('--ifrank_score_mode', str, 'fused'),  # fused | cosine | if
             SSL_Argument('--if_target', str, 'soft'),        # soft=忠实my_celoss(p·Σlogits−logits); hard=旧argmax
             SSL_Argument('--if_mean_reduce', str2bool, True), # 复刻my_celoss批规约(multiplyo需要;balanced无所谓)
             SSL_Argument('--if_mask', str2bool, False),       # 置信度门控: 只对高置信无标注算IF排序损失

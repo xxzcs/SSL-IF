@@ -51,7 +51,7 @@ def parse_args():
     parser.add_argument('--model_key', type=str, default='model', choices=['model', 'ema_model'])
 
     parser.add_argument('--batch_size', type=int, default=16)
-    parser.add_argument('--num_workers', type=int, default=4)
+    parser.add_argument('--num_workers', type=int, default=0)
     parser.add_argument('--data_dir', type=str, default='../uda_data')
     parser.add_argument('--img_size', type=int, default=224)
     parser.add_argument('--crop_ratio', type=float, default=0.875)

@@ -3,6 +3,7 @@
 set -e
 
 BASE_CONFIG="config/usb_cv/supervised/supervised_tn5000_19_0.yaml"
+DATA_DIR="${DATA_DIR:-../uda_data/TN5000}"
 
 for run in 1 2 3 4 5;
 do
@@ -13,6 +14,7 @@ do
 
     sed "s/^save_name:.*/save_name: ${save_name}/" "${BASE_CONFIG}" | \
     sed "s|^load_path:.*|load_path: ${load_path}|" | \
+    sed "s|^data_dir:.*|data_dir: ${DATA_DIR}|" | \
     sed "s/^seed:.*/seed: ${seed}/" > "${temp_config}"
 
     python3 train.py --c "${temp_config}"

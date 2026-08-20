@@ -96,7 +96,10 @@ class AlgorithmBase:
         self.optimizer, self.scheduler = self.set_optimizer()
 
         # build supervised loss and unsupervised loss
-        self.ce_loss = CELoss()
+        self.ce_loss = CELoss(
+            getattr(args, 'ce_class_weights', ''),
+            getattr(args, 'focal_gamma', 0.0),
+        )
         self.consistency_loss = ConsistencyLoss()
 
         # other arguments specific to the algorithm

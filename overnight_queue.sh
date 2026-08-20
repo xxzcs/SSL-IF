@@ -34,8 +34,8 @@ eval_group(){  # <glob_prefix> <summary_csv>
 echo "[$(date)] 等待 A/B(chain_simmatch_if_refselect_ab) 结束..."
 while pgrep -f chain_simmatch_if_refselect_ab.sh >/dev/null 2>&1; do sleep 60; done
 echo "[$(date)] A/B 已结束, eval A/B"
-eval_group simmatch_if_bus_ab_topk   results/ab_refselect_summary.csv
-eval_group simmatch_if_bus_ab_byinst results/ab_refselect_summary.csv
+eval_group simmatch_if_bus_ab_topk   results/BUS_ALL_EXPERIMENTS.csv
+eval_group simmatch_if_bus_ab_byinst results/BUS_ALL_EXPERIMENTS.csv
 
 # ---- 冒烟门: 独占 GPU 下确认 teacher_fuse 能跑通(250 iter, epoch1 触发新路径) ----
 echo "[$(date)] teacher_fuse 冒烟测试..."
@@ -55,7 +55,7 @@ if [ "$TF_OK" = 1 ]; then
         ifrank_mode=teacher_fuse ifrank_combine=multiply use_strong_if=True corrT=0.9 \
         ref_select=by_instance ref_cand_k=8 if_fuse_strength=${st}
     done
-    eval_group "simmatch_if_bus_tf_st${st}" results/tf_summary.csv
+  eval_group "simmatch_if_bus_tf_st${st}" results/BUS_ALL_EXPERIMENTS.csv
   done
 fi
 
@@ -65,12 +65,12 @@ for seed in $SEEDS; do
     ifrank_mode=add ifrank_combine=multiplyo if_lambda=10.0 corrT=0.1 use_strong_if=True \
     ref_select=by_instance ref_cand_k=8
 done
-eval_group simmatch_if_bus_biMulo results/bi_combine_summary.csv
+eval_group simmatch_if_bus_biMulo results/BUS_ALL_EXPERIMENTS.csv
 for seed in $SEEDS; do
   run_one "simmatch_if_bus_biBal_s${seed}" "$seed" \
     ifrank_mode=add ifrank_combine=multiply_balanced corrT=0.5 use_strong_if=False \
     ref_select=by_instance ref_cand_k=8
 done
-eval_group simmatch_if_bus_biBal results/bi_combine_summary.csv
+eval_group simmatch_if_bus_biBal results/BUS_ALL_EXPERIMENTS.csv
 
 echo "[$(date)] ===== 通宵队列全部完成 ====="

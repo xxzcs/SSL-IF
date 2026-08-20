@@ -7,7 +7,7 @@ for tag in $TAGS; do
     echo "===== eval ${tag} ${kind} ====="
     python3 eval_sup.py \
       --dataset bus --num_classes 2 \
-      --summary_csv results/simmatch_if_bus_summary.csv \
+      --summary_csv results/BUS_ALL_EXPERIMENTS.csv \
       --net resnet18 --model_key ema_model \
       --data_dir ../uda_data --batch_size 16 --num_labels 878 \
       --eval_dest test \
@@ -17,4 +17,4 @@ for tag in $TAGS; do
       --method_suffix ${tag}_${kind} || echo "[warn] eval ${tag} ${kind} 失败"
   done
 done
-echo "===== SimMatch-IF BUS 汇总 ====="; cat results/simmatch_if_bus_summary.csv
+echo "===== SimMatch-IF BUS 汇总 ====="; cat results/BUS_ALL_EXPERIMENTS.csv

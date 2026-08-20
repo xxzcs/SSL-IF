@@ -3,9 +3,9 @@
 cd /home/xiexiaozheng/Semi-supervised-learning
 source activate wssl 2>/dev/null || conda activate wssl || true
 
-echo "[$(date)] 等待 BUS 完成 (results/simmatch_bus_summary.csv) ..."
+echo "[$(date)] 等待 BUS 完成 (results/BUS_ALL_EXPERIMENTS.csv) ..."
 for i in $(seq 1 900); do   # 最多等 15 小时
-  if [ -f results/simmatch_bus_summary.csv ] && ! pgrep -f "train.py" >/dev/null 2>&1; then
+  if [ -f results/BUS_ALL_EXPERIMENTS.csv ] && ! pgrep -f "train.py" >/dev/null 2>&1; then
     echo "[$(date)] 检测到 BUS 已完成"; break
   fi
   sleep 60

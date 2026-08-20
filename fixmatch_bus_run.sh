@@ -7,8 +7,8 @@
 # 全 3090/semilearn 同套: lr0.0046875 / ema_model eval / skip-completed + 重试一次。软先出(核心答案), 硬随后。
 set -u
 cd /home/xiexiaozheng/Semi-supervised-learning
-SUMMARY=results/fim_summary.csv          # FixMatch base + 5配方 结果
-FXSUM=results/gen5_summary.csv           # FlexMatch s5 收尾并入 gen5
+SUMMARY=results/BUS_ALL_EXPERIMENTS.csv  # BUS 主总表
+FXSUM=results/BUS_ALL_EXPERIMENTS.csv    # FlexMatch s5 收尾并入同一总表
 FXCFG=config/usb_cv/flexmatch/flexmatch_bus_878_fixed.yaml
 FIMCFG=config/usb_cv/fixmatch/fixmatch_bus_878_0.yaml
 LR=0.0046875

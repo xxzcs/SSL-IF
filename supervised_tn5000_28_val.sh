@@ -2,13 +2,15 @@
 
 set -e
 
+DATA_DIR="${DATA_DIR:-../uda_data/TN5000}"
+
 python3 eval_sup.py \
     --dataset tn5000 \
     --num_classes 2 \
     --summary_csv results/tn5000_summary.csv \
     --net resnet18 \
     --model_key model \
-    --data_dir ../uda_data/TN5000 \
+    --data_dir "${DATA_DIR}" \
     --batch_size 16 \
     --num_labels 700 \
     --label_ratio 0.2 \
@@ -22,7 +24,7 @@ python3 eval_sup.py \
     --summary_csv results/tn5000_summary.csv \
     --net resnet18 \
     --model_key model \
-    --data_dir ../uda_data/TN5000 \
+    --data_dir "${DATA_DIR}" \
     --batch_size 16 \
     --num_labels 700 \
     --label_ratio 0.2 \

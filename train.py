@@ -86,6 +86,18 @@ def get_config():
         "--ema_m", type=float, default=0.999, help="ema momentum for eval_model"
     )
     parser.add_argument("--ulb_loss_ratio", type=float, default=1.0)
+    parser.add_argument(
+        "--ce_class_weights",
+        type=str,
+        default="",
+        help="comma-separated class weights for labeled CE only, e.g. '1.69,0.71'",
+    )
+    parser.add_argument(
+        "--focal_gamma",
+        type=float,
+        default=0.0,
+        help="gamma for focal loss on labeled CE; 0 disables focal loss",
+    )
 
     """
     Optimizer configurations

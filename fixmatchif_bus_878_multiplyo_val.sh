@@ -8,7 +8,7 @@ for ifw in 8 10; do
         python3 eval_sup.py \
             --dataset bus \
             --num_classes 2 \
-            --summary_csv results/bus_summary.csv \
+            --summary_csv results/BUS_ALL_EXPERIMENTS.csv \
             --net resnet18 \
             --model_key ema_model \
             --data_dir ../uda_data \
@@ -24,7 +24,7 @@ for ifw in 8 10; do
         python3 eval_sup.py \
             --dataset bus \
             --num_classes 2 \
-            --summary_csv results/bus_summary.csv \
+            --summary_csv results/BUS_ALL_EXPERIMENTS.csv \
             --net resnet18 \
             --model_key ema_model \
             --data_dir ../uda_data \

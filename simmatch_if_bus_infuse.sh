@@ -12,7 +12,7 @@
 cd /home/xiexiaozheng/Semi-supervised-learning || exit 1
 source ~/anaconda3/etc/profile.d/conda.sh 2>/dev/null && conda activate wssl 2>/dev/null || true
 BASE=config/usb_cv/simmatch_if/simmatch_if_bus_878_0.yaml
-SUMMARY=results/simmatch_if_bus_infuse_summary.csv
+SUMMARY=results/BUS_ALL_EXPERIMENTS.csv
 
 # tag => if_fuse_strength
 declare -A STR=(

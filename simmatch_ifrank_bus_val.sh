@@ -7,7 +7,7 @@ for lam in 0.0 1.0; do
     echo "===== eval lambda=${lam} ${kind} ====="
     python3 eval_sup.py \
       --dataset bus --num_classes 2 \
-      --summary_csv results/simmatch_ifrank_bus_summary.csv \
+      --summary_csv results/BUS_ALL_EXPERIMENTS.csv \
       --net resnet18 --model_key ema_model \
       --data_dir ../uda_data --batch_size 16 --num_labels 878 \
       --eval_dest test \
@@ -17,4 +17,4 @@ for lam in 0.0 1.0; do
       --method_suffix l${lam}_${kind} || echo "[warn] eval lambda=${lam} ${kind} 失败"
   done
 done
-echo "===== SimMatch-ifrank BUS 汇总 ====="; cat results/simmatch_ifrank_bus_summary.csv
+echo "===== SimMatch-ifrank BUS 汇总 ====="; cat results/BUS_ALL_EXPERIMENTS.csv

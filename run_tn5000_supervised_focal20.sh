@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+cd /home/xiexiaozheng/Semi-supervised-learning
+source ~/anaconda3/etc/profile.d/conda.sh 2>/dev/null || true
+conda activate wssl 2>/dev/null || true
+
+METHOD=supervised
+RATIO=20
+SEEDS=${SEEDS:-"1 2 3 4 5"}
+DATA_DIR=${DATA_DIR:-../uda_data/TN5000}
+FORCE_RERUN=${FORCE_RERUN:-0}
+
+# Keep the original split. Only change the supervised loss.
+BATCH_SIZE=${BATCH_SIZE:-8}
+EVAL_BATCH_SIZE=${EVAL_BATCH_SIZE:-16}
+LR=${LR:-0.002}
+TRAIN_ITER=${TRAIN_ITER:-4400}
+EVAL_ITER=${EVAL_ITER:-88}
+LOG_ITER=${LOG_ITER:-88}
+WARMUP_ITER=${WARMUP_ITER:-176}
+LR_DROP_ITER=${LR_DROP_ITER:-"1320 2640 3960"}
+
+CE_CLASS_WEIGHTS=${CE_CLASS_WEIGHTS:-1.6957,0.7091}
+FOCAL_GAMMA=${FOCAL_GAMMA:-2.0}
+SAVE_SUFFIX=${SAVE_SUFFIX:-focal_g2_wce}
+
+METHOD="${METHOD}" \
+RATIO="${RATIO}" \
+SEEDS="${SEEDS}" \
+DATA_DIR="${DATA_DIR}" \
+BATCH_SIZE="${BATCH_SIZE}" \
+EVAL_BATCH_SIZE="${EVAL_BATCH_SIZE}" \
+LR="${LR}" \
+TRAIN_ITER_OVERRIDE="${TRAIN_ITER}" \
+EVAL_ITER_OVERRIDE="${EVAL_ITER}" \
+LOG_ITER_OVERRIDE="${LOG_ITER}" \
+WARMUP_ITER_OVERRIDE="${WARMUP_ITER}" \
+LR_DROP_ITER_OVERRIDE="${LR_DROP_ITER}" \
+CE_CLASS_WEIGHTS="${CE_CLASS_WEIGHTS}" \
+SAVE_SUFFIX="${SAVE_SUFFIX}" \
+FORCE_RERUN="${FORCE_RERUN}" \
+AUTO_EVAL=1 \
+EVAL_KINDS=latest \
+EVAL_THRESHOLD_MODES=default_0.5 \
+EXTRA_CONFIG_APPEND="focal_gamma: ${FOCAL_GAMMA}" \
+bash run_tn5000_ratio.sh

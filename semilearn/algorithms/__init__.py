@@ -12,6 +12,7 @@ from .flexmatch import FlexMatch
 from .freematch import FreeMatch, FreeMatch_IF
 from .fullysupervised import FullySupervised
 from .meanteacher import MeanTeacher
+from .meanteacher_ap import MeanTeacherAP
 from .mixmatch import MixMatch
 from .pimodel import PiModel
 from .pseudolabel import PseudoLabel
@@ -37,6 +38,5 @@ def get_algorithm(args, net_builder, tb_log, logger):
         return alg
     else:
         raise KeyError(f'Unknown algorithm: {str(args.algorithm)}')
-
 
 

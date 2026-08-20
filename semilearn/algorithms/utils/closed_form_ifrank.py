@@ -201,9 +201,35 @@ class ClosedFormIFRankMixin:
             score = self.if_lambda * if_coef * z_if + self.csim_lambda * z_cos
         elif self.ifrank_combine == 'product_balanced':
             score = (self.if_lambda * if_coef * z_if) * (self.csim_lambda * z_cos)
+        elif self.ifrank_combine == 'residual_product_balanced':
+            gate = torch.clamp(1.0 + self.if_lambda * if_coef * z_if, min=0.0)
+            score = (self.csim_lambda * z_cos) * gate
+        elif self.ifrank_combine == 'gated_cosine_balanced':
+            gate = torch.sigmoid(self.if_lambda * if_coef * z_if)
+            score = (self.csim_lambda * z_cos) * gate
         else:  # 'multiply'
             score = self.if_lambda * if_coef * z_if + self.csim_lambda * cos
         return F.softmax(score / self.corrT, dim=1)
+
+    def _hard_label_grad(self, logits, targets):
+        probs = F.softmax(logits, dim=1)
+        one_hot = F.one_hot(targets, self.num_classes).float()
+        grad = probs - one_hot
+
+        focal_gamma = float(getattr(self.ce_loss, 'focal_gamma', 0.0))
+        if focal_gamma <= 0:
+            return grad
+
+        class_weights = getattr(self.ce_loss, 'class_weights', None)
+        alpha = logits.new_ones(targets.shape[0])
+        if class_weights is not None:
+            alpha = class_weights.to(logits.device).gather(0, targets)
+
+        pt = probs.gather(1, targets.unsqueeze(1)).squeeze(1).clamp_min(1e-12)
+        one_minus_pt = (1.0 - pt).clamp_min(1e-12)
+        focal_scale = one_minus_pt.pow(focal_gamma)
+        focal_corr = -focal_gamma * pt * one_minus_pt.pow(focal_gamma - 1.0) * torch.log(pt)
+        return (alpha * (focal_scale + focal_corr)).unsqueeze(1) * grad
 
     def ifrank_loss(self, logits_x_lb, y_lb, logits_x_ulb_w, logits_x_ulb_s, phi_lb, phi_uw, phi_us):
         num_cls = self.num_classes
@@ -218,8 +244,7 @@ class ClosedFormIFRankMixin:
         mean_reduce = getattr(self, 'if_mean_reduce', True)
         with torch.no_grad():
             lg_l = logits_x_lb.detach(); lg_uw = logits_x_ulb_w.detach(); lg_us = logits_x_ulb_s.detach()
-            p_l = F.softmax(lg_l, dim=1)
-            g_l = p_l - F.one_hot(y_lb, num_cls).float()
+            g_l = self._hard_label_grad(lg_l, y_lb)
             p_uw = F.softmax(lg_uw, dim=1); p_us = F.softmax(lg_us, dim=1)
             if if_target == 'soft':
                 # 忠实 my_celoss(原始 logits 软目标): g = p·Σlogits − logits (实测与 Captum corr≈0.905)
@@ -227,7 +252,9 @@ class ClosedFormIFRankMixin:
                 g_us = p_us * lg_us.sum(1, keepdim=True) - lg_us
             else:
                 y_u = F.one_hot(p_uw.argmax(1), num_cls).float()   # 旧硬 argmax(仅对照)
-                g_uw = p_uw - y_u; g_us = p_us - y_u
+                y_u_idx = p_uw.argmax(1)
+                g_uw = self._hard_label_grad(lg_uw, y_u_idx)
+                g_us = self._hard_label_grad(lg_us, y_u_idx)
             if mean_reduce:
                 g_l = g_l / max(L, 1); g_uw = g_uw / max(U, 1); g_us = g_us / max(U, 1)
             IF_uw = self.if_tracin_scale * (g_uw @ g_l.t()) * (phi_uw.detach() @ phi_lb_d.t())

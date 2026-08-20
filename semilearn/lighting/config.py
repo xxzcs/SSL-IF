@@ -44,6 +44,8 @@ def get_config(config):
                         help='batch size of evaluation data loader (it does not affect the accuracy)')
     parser.add_argument('--ema_m', type=float, default=0.999, help='ema momentum for eval_model')
     parser.add_argument('--ulb_loss_ratio', type=float, default=1.0)
+    parser.add_argument('--ce_class_weights', type=str, default='')
+    parser.add_argument('--focal_gamma', type=float, default=0.0)
 
     '''
     Optimizer configurations
